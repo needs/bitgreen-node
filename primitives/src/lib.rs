@@ -11,8 +11,8 @@ use sp_std::convert::TryFrom;
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
 
-mod vcu;
-pub use vcu::*;
+mod carbon_credits;
+pub use carbon_credits::*;
 
 pub const BBB_TOKEN: u32 = 1;
 
@@ -44,7 +44,7 @@ pub mod time {
 
     // 1 in 4 blocks (on average, not counting collisions) will be primary BABE blocks.
     pub const PRIMARY_PROBABILITY: (u64, u64) = (1, 4);
-    pub const EPOCH_DURATION_IN_BLOCKS: BlockNumber = 1 * HOURS;
+    pub const EPOCH_DURATION_IN_BLOCKS: BlockNumber = HOURS;
     pub const EPOCH_DURATION_IN_SLOTS: u64 = {
         const SLOT_FILL_RATE: f64 = MILLISECS_PER_BLOCK as f64 / SLOT_DURATION as f64;
         (EPOCH_DURATION_IN_BLOCKS as f64 * SLOT_FILL_RATE) as u64
@@ -115,18 +115,21 @@ pub use sp_runtime::OpaqueExtrinsic as UncheckedExtrinsic;
     TypeInfo,
 )]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-pub enum TokenSymbol {
-    BBB = 0,
-    USDG = 1,
+#[allow(clippy::unnecessary_cast)]
+pub enum CurrencyId {
+    DOT = 0,
+    ACA = 1,
+    AUSD = 2,
 }
 
-impl TryFrom<u8> for TokenSymbol {
+impl TryFrom<u8> for CurrencyId {
     type Error = ();
 
     fn try_from(v: u8) -> Result<Self, Self::Error> {
         match v {
-            0 => Ok(TokenSymbol::BBB),
-            1 => Ok(TokenSymbol::USDG),
+            0 => Ok(CurrencyId::DOT),
+            1 => Ok(CurrencyId::ACA),
+            2 => Ok(CurrencyId::AUSD),
             _ => Err(()),
         }
     }

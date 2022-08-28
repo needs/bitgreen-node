@@ -8,6 +8,7 @@ include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 mod weights;
 pub mod xcm_config;
+use cumulus_pallet_parachain_system::RelayNumberStrictlyIncreases;
 use smallvec::smallvec;
 use sp_api::impl_runtime_apis;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata};
@@ -48,7 +49,7 @@ use sp_std::convert::TryInto;
 use weights::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight};
 use xcm_config::{XcmConfig, XcmOriginToTransactDispatchOrigin};
 
-pub use primitives::{Amount, TokenSymbol};
+pub use primitives::Amount;
 
 #[cfg(any(feature = "std", test))]
 pub use sp_runtime::BuildStorage;
@@ -361,6 +362,7 @@ parameter_types! {
 }
 
 impl pallet_transaction_payment::Config for Runtime {
+    type Event = Event;
     type OnChargeTransaction = pallet_transaction_payment::CurrencyAdapter<Balances, ()>;
     type WeightToFee = WeightToFee;
     type LengthToFee = ConstantMultiplier<Balance, TransactionByteFee>;
@@ -382,6 +384,7 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type OutboundXcmpMessageSource = XcmpQueue;
     type XcmpMessageHandler = XcmpQueue;
     type ReservedXcmpWeight = ReservedXcmpWeight;
+    type CheckAssociatedRelayNumber = RelayNumberStrictlyIncreases;
 }
 
 impl parachain_info::Config for Runtime {}
@@ -461,7 +464,8 @@ impl pallet_collator_selection::Config for Runtime {
 
 // orml pallets
 parameter_type_with_key! {
-    pub ExistentialDeposits: |_currency_id: u32| -> Balance {
+    pub ExistentialDeposits: |_currency_id: primitives::CurrencyId| -> Balance {
+        // TODO : Calculate correct ED before launch
         Zero::zero()
     };
 }
@@ -477,7 +481,7 @@ impl orml_tokens::Config for Runtime {
     type Event = Event;
     type Balance = Balance;
     type Amount = Amount;
-    type CurrencyId = u32;
+    type CurrencyId = primitives::CurrencyId;
     type WeightInfo = ();
     type ExistentialDeposits = ExistentialDeposits;
     type OnDust = orml_tokens::BurnDust<Runtime>;
@@ -504,17 +508,14 @@ pub const MILLICENTS: Balance = 1_000_000_000;
 pub const CENTS: Balance = 1_000 * MILLICENTS;
 pub const DOLLARS: Balance = 100 * CENTS;
 
-const fn deposit(items: u32, bytes: u32) -> Balance {
-    items as Balance * 15 * CENTS + (bytes as Balance) * 6 * CENTS
-}
 // Asset pallet
 parameter_types! {
-    pub const ASSETDEPOSIT: Balance = 1 * DOLLARS;
-    pub const ASSETACCOUNTDEPOSIT: Balance = 1 * DOLLARS;
+    pub const ASSETDEPOSIT: Balance = DOLLARS;
+    pub const ASSETACCOUNTDEPOSIT: Balance = DOLLARS;
     pub const STRINGLIMIT: u32 = 8192;	// max metadata size in bytes
-    pub const METADATADEPOSITBASE: Balance= 1 * DOLLARS;
-    pub const METADATADEPOSITPERBYTE: Balance = 1 * CENTS;
-    pub const APPROVALDEPOSIT: Balance = 1 * DOLLARS;
+    pub const METADATADEPOSITBASE: Balance= DOLLARS;
+    pub const METADATADEPOSITPERBYTE: Balance =CENTS;
+    pub const APPROVALDEPOSIT: Balance = DOLLARS;
 }
 
 pub struct TestFreezer;
@@ -543,13 +544,26 @@ impl pallet_assets::Config for Runtime {
     type Extra = ();
 }
 
+impl pallet_membership::Config for Runtime {
+    type Event = Event;
+    type AddOrigin = EnsureRoot<AccountId>;
+    type RemoveOrigin = EnsureRoot<AccountId>;
+    type SwapOrigin = EnsureRoot<AccountId>;
+    type ResetOrigin = EnsureRoot<AccountId>;
+    type PrimeOrigin = EnsureRoot<AccountId>;
+    type MembershipInitialized = ();
+    type MembershipChanged = ();
+    type MaxMembers = ConstU32<100_000>;
+    type WeightInfo = ();
+}
+
 parameter_types! {
   pub MarketplaceEscrowAccount : AccountId =  PalletId(*b"bitg/mkp").into_account_truncating();
   pub const VCUPalletId: PalletId = PalletId(*b"bitg/vcu");
 }
 
 // TODO : Ensure sensible values
-impl pallet_vcu::Config for Runtime {
+impl pallet_carbon_credits::Config for Runtime {
     type Event = Event;
     type Balance = u128;
     type AssetId = u32;
@@ -557,6 +571,7 @@ impl pallet_vcu::Config for Runtime {
     type AssetHandler = Assets;
     type ItemId = u32;
     type NFTHandler = Uniques;
+    type KYCProvider = KYCMembership;
     type ForceOrigin = EnsureRoot<AccountId>;
     type MarketplaceEscrow = MarketplaceEscrowAccount;
     type MaxAuthorizedAccountCount = ConstU32<10>;
@@ -575,7 +590,7 @@ parameter_types! {
     pub const VCUPoolPalletId: PalletId = PalletId(*b"bit/vcup");
 }
 
-impl pallet_vcu_pools::Config for Runtime {
+impl pallet_carbon_credits_pool::Config for Runtime {
     type Event = Event;
     type PoolId = u32;
     type AssetHandler = Assets;
@@ -607,8 +622,6 @@ impl pallet_uniques::Config for Runtime {
     type KeyLimit = ConstU32<50>;
     type ValueLimit = ConstU32<50>;
     type WeightInfo = ();
-    #[cfg(feature = "runtime-benchmarks")]
-    type Helper = ();
 }
 
 parameter_types! {
@@ -637,7 +650,7 @@ construct_runtime!(
 
         // Monetary stuff.
         Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>} = 10,
-        TransactionPayment: pallet_transaction_payment::{Pallet, Storage} = 11,
+        TransactionPayment: pallet_transaction_payment::{Pallet, Storage, Event<T>} = 11,
 
         // Collator support. The order of these 4 are important and shall not change.
         Authorship: pallet_authorship::{Pallet, Call, Storage} = 20,
@@ -657,11 +670,12 @@ construct_runtime!(
         Nft: orml_nft::{Pallet, Call, Storage, Config<T>}= 42,
 
         // Bitgreen pallets
+        KYCMembership: pallet_membership::{Pallet, Call, Storage, Config<T>, Event<T>} = 50,
         Sudo: pallet_sudo::{Pallet, Call, Storage, Config<T>, Event<T>} = 51,
         Assets: pallet_assets::{Pallet, Call, Storage, Event<T>} = 52,
         Uniques: pallet_uniques::{Pallet, Call, Storage, Event<T>} = 53,
-        VCU: pallet_vcu::{Pallet, Call, Storage, Event<T>} = 54,
-        VCUPools: pallet_vcu_pools::{Pallet, Call, Storage, Event<T>} = 55,
+        VCU: pallet_carbon_credits::{Pallet, Call, Storage, Event<T>} = 54,
+        VCUPools: pallet_carbon_credits_pool::{Pallet, Call, Storage, Event<T>} = 55,
     }
 );
 
@@ -678,7 +692,7 @@ mod benches {
         [pallet_timestamp, Timestamp]
         [pallet_collator_selection, CollatorSelection]
         [cumulus_pallet_xcmp_queue, XcmpQueue]
-        [pallet_vcu, VCU]
+        [pallet_carbon_credits, VCU]
     );
 }
 
